@@ -6,7 +6,7 @@ Food Demand Forecasting Challenge
 Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different distribution centers (center_id) serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week 146 to 155) minimizing the total root-mean-squared-error (RMSE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: 
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/
 
-Gradient boosting machine (LightGBM: https://lightgbm.readthedocs.io/en/stable/Python-Intro.html) was used. Various aspects including: exploratory data analysis, visualization, feature engineering, feature importance/selection and hyperparameter optimization relevant to time-series forecasting with LightGBM are presented. The RMSE obtained for the submitted answers after was 50.8 which ranks 88 out of 1861 submissions (as of 2024-05-23):
+Gradient boosting machine (LightGBM: https://lightgbm.readthedocs.io/en/stable/Python-Intro.html) was used. Various aspects including: exploratory data analysis, visualization, feature engineering, feature importance/selection and hyperparameter optimization relevant to time-series forecasting with LightGBM are presented. The RMSE obtained for the submitted answers was 50.8 which ranks 88 out of 1861 submissions (on 2024-05-23):
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/#LeaderBoard
 
 
@@ -39,7 +39,7 @@ Additional_merge_dfs = {'foodDemand_train/fulfilment_center_info.csv': 'center_i
 
 Normally to submit predictions with **run_mode=0**, the code runs on the entire train data file (weeks 1 to 145) and makes forecasts using the test file (weeks 146 to 155).
 
-Alternatively, with **run_mode=1**, the train file is separated into a new train file (weeks 1 to 135) and new test file (weeks 136 to 145). Then using **run_mode=2**, the code can run on the new files end-to0end to evaluate the quality of the forecasts.
+Alternatively, with **run_mode=1**, the train file is separated into a new train file (weeks 1 to 135) and new test file (weeks 136 to 145). Then using **run_mode=2**, the code can run on the new files end-to-end to evaluate the quality of the forecasts.
 
 
 ```python
@@ -63,7 +63,7 @@ lgb_model_str = 'lightGBM_opt_pickles/lgb_model'  # prefix for data/model files
 quantile_alphas = [0.05, 0.5, 0.95]  # predict quantiles for the predictions (used for plotting confidence intervals)
 ```
 
-variable names (depends on the dataset). Categorical variables have more than two categories. 
+Variable names (depend on the dataset). Categorical variables have more than two categories. 
 
 
 ```python
