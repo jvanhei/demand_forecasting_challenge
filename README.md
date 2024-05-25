@@ -1,14 +1,9 @@
-Food Demand Forecasting Challenge
-
-
 <H3> Introduction </H3>
-
 Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different distribution centers (center_id) serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week 146 to 155) minimizing the total root-mean-squared-error (RMSE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: 
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/
 
 Gradient boosting machine (LightGBM: https://lightgbm.readthedocs.io/en/stable/Python-Intro.html) was used. Various aspects including: exploratory data analysis, visualization, feature engineering, feature importance/selection and hyperparameter optimization relevant to time-series forecasting with LightGBM are presented. The RMSE obtained for the submitted answers was 50.8 which ranks 88 out of 1861 submissions (on 2024-05-23):
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/#LeaderBoard
-
 
 
 ```python
@@ -90,11 +85,11 @@ param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_ch
 ```
 
 Below are the sequence of steps including: feature importances/relevance, feature engineering, hyperparameter optimization, and saving results.
-Each step depends on the one before it. It is a good practice to check the results, accuracy and performance after each step before proceeding to the next. The file **lightgbm_order_forecasting.py** in the project directory gives more details for each step including running lightGBM https://github.com/microsoft/LightGBM.
+Each step depends on the previous one. It is good practice to check the results, accuracy and performance after each step before proceeding to the next. The file **data_and_scripts/lightgbm_order_forecasting.py** in the project directory gives more details for each step including running lightGBM https://github.com/microsoft/LightGBM.
 Edit each step as necessary before running and check results after running it.
 Set the step you are working on to 'True' to run and test the results of that step. 
 
-<h4> For demonstration and simplicity, here we skip these steps, instead we perform some exploratory data analysis, load the final model results and view them. </h4>
+<h4> For demonstration and simplicity, these steps are skipped, instead perform some exploratory data analysis, load the final model results and view them. </h4>
 
 
 ```python
@@ -114,7 +109,7 @@ test_recurrent = True  # check if recurrent features improve test and CV results
 
 ```
 
-Load the raw data file and tabulate some statistics
+Load the raw data file and tabulate some statistics.
 
 
 ```python
@@ -258,7 +253,7 @@ if run_mode == 2:
     lgb_model_str = lgb_model_str + file_name_ext
 ```
 
-For **run_mode=1** only, new csv files are written and then program is terminated. Then restart program with **run_mode=2** for testing forecasts end-to-end. 
+For **run_mode=1**, new csv files are written and then program is terminated. Then restart program with **run_mode=2** for testing forecasts end-to-end. 
 
 
 ```python
@@ -281,7 +276,7 @@ if run_mode == 1: # overwrite df and df_test data to test the whole code end-to-
     sys.exit(f'Files written: {df_name}, {df_test_name}, {df_sample_name}. Test this script using these files by running it again with run_mode=2')
 ```
 
-Set up the time intervals that define the training/validation, test and prediction data
+Set up the time intervals that define the training/validation, test and prediction data.
 
 
 ```python
@@ -293,7 +288,7 @@ df = pd.concat((df, df_test), axis=0)  # avoids errors later if manipulating df_
 train_time = test_time - tstep
 ```
 
-Plot histograms for all features
+Plot histograms for all features.
 
 
 ```python
@@ -307,7 +302,7 @@ ml_vis_eda.plot_multiple(df.values, df.columns, targets=df[target_feature], targ
     
 
 
-Merge the columns from all of the datasets to see if there is additional information that can help the model more accurately 
+Merge the columns from all datasets to verify if there is additional information that can improve the model's accuracy.
 
 
 ```python
@@ -407,7 +402,7 @@ for merge_df, merge_col in Additional_merge_dfs.items():
     None
 
 
-Make the last column the target we want to predict
+Move the target column to the end of the dataframe.
 
 
 ```python
@@ -551,7 +546,7 @@ df.head()
 
 
 
-Sort the data so that adjacent rows represent the same time-series location with increasing time
+Sort the data such that adjacent rows represent the same time-series location with increasing time.
 
 
 ```python
@@ -670,9 +665,9 @@ ml_vis_eda.plot_multiple(df_copy[df_copy.columns].values, df_copy.columns, targe
     
 
 
-The color variation indicates that **num_orders** depends strongly on **emailer_for_promotion**, **homepage_featured**, **base_price**, **checkout_price** and **op_area**.
+The color variation indicates that **num_orders** depends on **emailer_for_promotion**, **homepage_featured**, **base_price**, **checkout_price** and **op_area**.
 
-The relationship between features is shown below using *spearman ranking* correlation coefficient which is reasonable for all variables that can ordered including numerical and binary categorical features, but not categorical variables with more than one category.
+The relationship between features is shown below using *spearman ranking* correlation coefficient. This makes sense for all variables that can be ordered including numerical and binary categorical features, but not categorical variables with more than one category.
 
 
 ```python
@@ -686,10 +681,10 @@ ml_vis_eda.plot_corr(df_copy[ordered_features], method='spearman')
     
 
 
-The correlation heatmap indicates that **checkout_price** and **base_price** are strongly correlated (R^2=0.96) meaning that together they do not add much new information. 
+The correlation heatmap indicates that **checkout_price** and **base_price** are strongly correlated (R^2=0.96) meaning that together they do not add nearly any new information. 
 
 Based on the heatmap correlations, **checkout_price** is plotted below against all other features in scatter plots.
-These show that the targets **num_orders** depends strongly on **checkout price** for a few of the *meal_id* categories.
+These show that the targets **num_orders** depends on **checkout price** for a few of the *meal_id* categories.
 
 
 ```python
@@ -959,7 +954,7 @@ for ind, alpha in enumerate(alphas):
     final_preds_gbm.append(pd.read_csv(fname_final))
 ```
 
-The coefficient of determination **R^2** is dimensionless and inversely related to the L2 loss, It is used to evaluate the forecasting predictions and confidence (quantile) estimates.
+The coefficient of determination **R^2** is dimensionless and inversely related to the L2 loss. It is used to evaluate the forecasting predictions and confidence (quantile) estimates.
 
 
 ```python
@@ -1227,7 +1222,7 @@ plt.show()
 
 
 <H3> Conclusions </H3>
-A time series forecasting model was developed using gradient boosting algorithm (LightGBM) with lags of up to 20 weeks to forecast order demand and achieved a reasonable accuracy (R^2 = 85.7%) on the test data (weeks 136 to 145 for 3600 time series). The model can forecast RMSE predictions and confidence (quantile) estimates, and was optimized using feature engineering, feature selection and hyperparameter tuning in a semi-automated fashion. Slow (subtle) time-dependence of the features over the course of the data (155 weeks) was observed and its modeling can be investigated further. (e.g. capturing effects of inflation with slow price increases)
+A time series forecasting model was developed using gradient boosting algorithm (LightGBM) with lags of up to 20 weeks to forecast order demand and achieved a reasonable accuracy (R^2 = 85.7%) on the test data (weeks 136 to 145 for 3600 time series). The model can forecast RMSE predictions and confidence (quantile) estimates, and was optimized using feature engineering, feature selection and hyperparameter tuning in a semi-automated fashion. Slow (subtle) time-dependence of the features over the course of the data (155 weeks) was observed and its modeling can be investigated further (e.g. capturing effects of inflation with slow price increases).
 
 
 ```python
