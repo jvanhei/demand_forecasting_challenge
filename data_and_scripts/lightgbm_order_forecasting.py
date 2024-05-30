@@ -26,6 +26,7 @@ run_mode = 0  # How to run this program
 # run_mode = 2: use new files (from run_mode=1) and run end-to-end, then calculate final predictions with validation
 test_time_len = None  # for run_mode=1 only: number of time-steps to use for predictions (None: same number of time-steps as run-mode=0)
 file_name_ext = '_virtual'  # string to append to validateion base filenames (run_mode = 1 and 2 only)
+objective_type = 'RMSLE'  # type of objective function to minimize ('poisson', 'R2', 'RMSLE')
 
 # some high-level hyperparameters
 algorithms = ['mean value', 'LightGBM']
@@ -44,10 +45,44 @@ quantile_alphas = [0.05, 0.5, 0.95]  # predict quantiles for the predictions (us
 
 # feature search hyperparameters -- since orders is a non-negative integer (count-like) we use 'poisson regression' for the objective. 
 # Note that during validation, number of boosters (stopping rounds) is determined by L2 (RMSE) loss which is what we want to minimize
+
+def MSLE_objective_lgb(targets, preds):
+    """ 
+    Custom objective function for lightGBM (log-mean-squared-error LMSE)
+    returns derivative of loss wrt preds, and second-order derivative of loss wrt preds 
+    
+    Use with: 
+    param_vals['objective'] = MSLE_objective_lgb; param_vals['metric'] = [MSLE_metric_lgb, 'l2']
+    with eval_metric=param_vals['metric'][0] in gbm.fit() for train_val_lightGBM()
+    """
+    small = 1.
+    preds = np.maximum(preds + 1., small)
+    temp = np.log(preds / (targets + 1.))
+    denom = 1. / preds
+    return temp * denom, (1. - temp) * denom * denom
+
+def MSLE_metric_lgb(targets, preds):
+    """
+    Evaluate this metric for early stopping rounds (LMSE loss)
+    """
+    small = 1.,
+    preds = np.maximum(preds + 1., small)
+    loss = 0.5 * np.sum((np.log((targets + 1.) / preds))**2)
+    return 'LMSE', loss, False
+
+def get_RMSLE_loss(preds, targets):
+    """
+    Evaluate the root-mean-squared-log-error loss given the predictions 'preds' and training data 'targets'
+    """
+    return np.sqrt(np.mean((np.log((targets + 1.) / (preds + 1.)))**2))
+
+def get_RMSE_loss(preds, targets):
+    return np.sqrt(np.mean((targets - preds)**2))
+
 nfold = 5  # number of cross-validation folds
-use_important_features = 4  # start with this many current features
-param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_child_samples':40, 'objective': 'poisson',
-        'metric':['l2', 'poisson'], 'early_stopping_round':1000, 'num_iterations':10000, 'verbose': -1,
+use_important_features = 2  # start with this many current features
+param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_child_samples':40, 'objective': 'l2',
+        'metric':['l2'], 'early_stopping_round':1000, 'num_iterations':10000, 'verbose': -1,
         'min_split_gain': 0., 'min_child_weight': 1e-3, 'reg_alpha': 0., 'reg_lambda': 0.,
         'subsample': 1.0, 'subsample_freq': 10, 'boosting_type': 'gbdt', 'first_metric_only': True} 
 
@@ -66,7 +101,7 @@ write_new_data = False  # this runs the final model to generate the data predict
 find_recurrent_features = True  # feature engineering: temporally lagged features 
 use_average_target_properties = False  # use temporal average statistics (keep False because it did not help CV scores improve)
 do_lr_opt = False  # optimize learning rate for gradient boosting
-do_pars_opt = False  # optimize hyperparameters for gradient boosting 
+do_pars_opt = None  # optimize hyperparameters for gradient boosting 
 test_recurrent = True  # check if recurrent features improve test and CV results for each time step
 
 # functions to create new file-names for end-to-end testing predictions (using run-mode=1, 2)
@@ -259,7 +294,7 @@ def train_val_lightGBM(cur_features, train_time, test_time, df_tree, t_var,
         cur_score_test = None
     gbm = lgb.LGBMRegressor(alpha=alpha, **params)
     gbm.fit(X_train2, y_train2, eval_set=eval_set, feature_name=cur_features, 
-        categorical_feature=categorical_features_cur)
+        categorical_feature=categorical_features_cur, eval_metric=param_vals['metric'][0])
     cur_score_train = gbm.score(X_train2, y_train2)
     if do_test:
         cur_score_test = gbm.score(X_test2, y_test2)
@@ -713,16 +748,21 @@ class Sfs_FW:
 
 #### steps: find_relevant_raw_features, find_relevant_eng_features 
 df_tree = df_copy.copy()
+
+if objective_type == 'RMSLE':
+    # convert targets to log(targets + 1)
+    df_tree[target_feature] = np.log(df_tree[target_feature] + 1)
+
 relevant_raw_features_fname = lgb_model_str + '_relevant_raw_features.pkl'
 relevant_eng_features_fname = lgb_model_str + '_relevant_eng_features.pkl'
 best_features = None  # initialize best features
 for ind_relevant, find_relevant in enumerate([find_relevant_raw_features, find_relevant_eng_features]):
     # the features common in each sublist below must appear together during feature selection
     selectable_features = [['center_id'], ['meal_id'], ['checkout_price'], ['base_price'], ['emailer_for_promotion'], 
-            ['homepage_featured'], ['city_code'], ['region_code'], ['center_type'], ['op_area'], ['category'], ['cuisine']]
+            ['homepage_featured'], ['city_code'], ['region_code'], ['center_type'], ['op_area'], ['category'], ['cuisine'],
+            [t_var]]
     
     if ind_relevant == 1:
-        selectable_features.append([t_var])
         # get temporal feature mean -- these inputs are known for future predictions so we can put it here
         eng_cat_features = ['base_price', 'checkout_price', 'emailer_for_promotion','homepage_featured']
         for eng_cat_feature in eng_cat_features:
@@ -798,12 +838,32 @@ for ind_relevant, find_relevant in enumerate([find_relevant_raw_features, find_r
     elif ind_relevant == 1:
         best_features = load_model_pickle(relevant_eng_features_fname)
 
+
 # remove columns no longer needed to release memory
 cols_keep = [id_var, t_var, target_feature]
 cols_keep.extend(best_features.copy())
 for col in df_tree.columns:
     if col not in cols_keep:
         df_tree.pop(col)
+
+
+# # 2024-05-27 -- optimizing rmsle (relevant raw features)
+# final LightGBM train score: 0.8552046903567609 with 2151 boosting rounds
+# best_scores_test: [0.3430720370703968, 0.3950831507932945, 0.8023119135674226, 0.802386071173102, 0.8112301353573637, 0.8140931286450854, 0.814946178130941, 0.8144371526280719, 0.8147542606495116]
+# best_scores_cv: [0.3584859239668875, 0.45120344147970926, 0.7984718438423445, 0.7986700775329402, 0.8096414780416005, 0.813090699891878, 0.8132525453089963, 0.8135398627338051, 0.8137226439898346]
+# best_test_features: [['base_price'], ['meal_id'], ['op_area'], ['homepage_featured'], ['emailer_for_promotion'], ['city_code'], ['category'], ['cuisine']]
+# removed/added: [False, False, False, False, False, False, False, False]
+# best_features: ['cuisine', 'homepage_featured', 'checkout_price', 'meal_id', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'op_area']
+# cur_features: ['center_id', 'checkout_price']
+
+# # relevant eng features
+# best_scores_test: [0.8213317939563317, 0.8264676782276448, 0.8261063603254764, 0.8264359104792862, 0.8252589287022488, 0.8261436107876848, 0.8243041937535824]
+# best_scores_cv: [0.821584766237988, 0.8239665514441228, 0.824018516584547, 0.8247898287761534, 0.82559501322061, 0.8259476414383992, 0.8264111551210834]
+# best_test_features: [['ts_mean'], {'cuisine'}, ['homepage_featured_mean_ts', 'homepage_featured'], ['category_week_checkout_price_ratio', 'category', 'checkout_price'], ['center_id_week_count', 'center_id'], ['checkout_price_mean_ts', 'checkout_price']]
+# removed/added: [False, True, False, False, False, False]
+# best_features: ['center_id_week_count', 'homepage_featured', 'meal_id_week_count', 'checkout_price', 'meal_id', 'checkout_price_mean_ts', 'homepage_featured_mean_ts', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'category_week_checkout_price_ratio', 'ts_mean', 'op_area']
+# cur_features: ['cuisine', 'homepage_featured', 'meal_id_week_count', 'checkout_price', 'meal_id', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'op_area']
+
 
 
 # try some hyperparameter optimization with optuna
@@ -832,8 +892,9 @@ def plot_opt(study):
     plot_slice(study).show()
 
 if do_lr_opt:
+    print('optimizing lightGBM hyperparameters ..')
     study = optuna.create_study(direction='maximize')  # trying to maximize the R**2
-    study.optimize(objective, n_trials=50)  # find optimal learning rate
+    study.optimize(objective, n_trials=64)  # find optimal learning rate
     print(study.best_params)
     plot_opt(study)
 
@@ -843,9 +904,10 @@ if do_lr_opt:
     study2 = load_model_pickle(fname_study)
 
 # optimize other hyperparameters
-if do_pars_opt:
+if do_pars_opt is not None:
+    print('optimizing lightGBM hyperparameters ..')
     study_pars = optuna.create_study(direction='maximize')
-    study_pars.optimize(objective, n_trials=10)
+    study_pars.optimize(objective, n_trials=do_pars_opt)
     plot_opt(study_pars)
     # save the study and load it later
     fname_study_pars = f"{lgb_model_str}_optuna_study_pars.pkl"
@@ -992,7 +1054,7 @@ if find_recurrent_features:  # add recurrent (temporally lagged) features
     fname_recurrent_params = f"{lgb_model_str}_steps_features_params.pkl"
     if do_recurrent_opt or not os.path.exists(fname_recurrent_params):
         # features known at all times including future
-        known_cols_all = ['checkout_price', 'emailer_for_promotion', 'homepage_featured', 'center_id_week_count', 
+        known_cols_all = ['checkout_price', 'base_price', 'emailer_for_promotion', 'homepage_featured', 'center_id_week_count', 
                 'meal_id_week_count', t_var]
         # features only known at present and past times 
         observed_cols_all = [target_feature]  # only the target is not known at future times
@@ -1045,8 +1107,8 @@ if find_recurrent_features:  # add recurrent (temporally lagged) features
                                  test_params=train_val_lightGBM_params, test_params_dict=train_val_lightGBM_params_dict)
                 sfs_fw.optimize()
                 best_features1 = sfs_fw.best_features
-                known_cols = [known_col for known_col in known_cols_all if any(
-                    col[:len(known_col) + 1] == known_col + '_' for col in best_features1)]
+                known_cols = [known_col for ind, known_col in enumerate(known_cols_all) if 
+                        set(selectable_features[ind]) <= set(best_features1)]
                 observed_cols = observed_cols_all.copy()  # just use the target_features 
                 save_model_pickle(fname_recurrent_features1, (sfs_fw, known_cols, observed_cols, observed_cols_stats))
             sfs_fw, known_cols, observed_cols, observed_cols_stats = load_model_pickle(fname_recurrent_features1)
@@ -1085,6 +1147,7 @@ if find_recurrent_features:  # add recurrent (temporally lagged) features
             params_recurrent.append([istep, t_min, t_max, window_pow, observed_cols, known_cols, observed_cols_stats])
         save_model_pickle(fname_recurrent_params, (best_features_steps, params_recurrent, best_features))
     best_features_steps, params_recurrent, best_features = load_model_pickle(fname_recurrent_params)
+
 
 def recurrent_models_save(train_time, test_time, df_tree, t_var, fname_recurrent_params,
         target_feature, categorical_features, param_vals, lgb_model_str, alphas):
@@ -1136,6 +1199,13 @@ def model_predictions_gbm(df_tree, fname_recurrent_params, t_var,
             ids = df_tree_t[pred_inds][id_var]
             X_test_ = df_X[pred_inds]
             gbm_frame = pd.DataFrame({id_var: ids, target_feature: gbm.predict(X_test_)})
+
+            # correct negative values -- quantile predictions can be -inf to inf 
+            # WIP: not quite right since we are estimating quantiles on log values (use custom objective/metric for lightGBM)
+            gbm_frame[target_feature] = np.maximum(gbm_frame[target_feature], 0)
+            if objective_type == 'RMSLE':  # invert log(x+1)
+                gbm_frame[target_feature] = np.exp(gbm_frame[target_feature]) - 1
+
             preds_gbm[ind] = pd.concat((preds_gbm[ind], gbm_frame), axis=0)
     return preds_gbm
 
@@ -1160,6 +1230,10 @@ if write_new_data:
 else:
     test_preds_gbm = []
     final_preds_gbm = []
+
+if objective_type == 'RMSLE':  # invert log(x+1) --> just use original training data
+    df_tree[target_feature] = df_copy[target_feature].values
+
 for ind, alpha in enumerate(alphas):
     fname_pred = lgb_model_str + '_test_alpha'+ str(alpha if alpha is not None else '_l2') +'.csv'
     fname_final = lgb_model_str + '_alpha'+str(alpha if alpha is not None else '_l2')+'.csv'
@@ -1205,22 +1279,29 @@ def get_R2_score(predictions, target_values, weights=None):
     explained_var = np.mean(weights_f * (target_values_f - mean_target_value)**2)  # explained weighted variance
     return 1. - unexplained_var / explained_var
 
-def get_lgb_scores(df, preds_gbm, id_var, target_feature, alphas):
+def get_lgb_scores(df, preds_gbm, id_var, target_feature, alphas, score_type='R2'):
     df_tree_scores = []
     for ind, alpha in enumerate(alphas):
         preds_gbm_ = preds_gbm[ind]
-        mask_gbm = df[id_var].isin(preds_gbm_[id_var])
+        mask_gbm = df[id_var].isin(preds_gbm_[id_var]) 
         lgb_targets = df[mask_gbm].sort_values(id_var)[target_feature].values
         lgb_preds = preds_gbm_.sort_values(id_var)[target_feature].values
-        df_tree_scores.append(get_R2_score(lgb_preds, lgb_targets))
+        if score_type=='R2':                                           
+            score = get_R2_score(lgb_preds, lgb_targets)
+        elif score_type=='RMSE':                                                                                                       
+            score = get_RMSE_loss(lgb_preds, lgb_targets)
+        elif score_type=='RMSLE':
+            score = get_RMSLE_loss(lgb_preds, lgb_targets)
+        df_tree_scores.append(score)
         print(f'alpha: {alpha}, score: {df_tree_scores[-1]}')
     return df_tree_scores
-
-print('test scores: ')
-df_tree_test_scores =  get_lgb_scores(df_tree, test_preds_gbm, id_var, target_feature, alphas)
-if run_mode == 2:
-    print('final scores:' )
-    df_tree_final_scores = get_lgb_scores(df_sample, final_preds_gbm, id_var, target_feature, alphas)
+        
+for score_type in ['R2', 'RMSE', 'RMSLE']:
+    print(f'test scores: {score_type}')                                                             
+    df_tree_test_scores =  get_lgb_scores(df_tree, test_preds_gbm, id_var, target_feature, alphas, score_type)
+    if run_mode == 2:
+        print('final scores:' )
+        df_tree_final_scores = get_lgb_scores(df_sample, final_preds_gbm, id_var, target_feature, alphas, score_type)
 
 # look at (outliers, anomalies, statistics) for each time-step: see if this can help with feature engineering
 if False:
@@ -1323,4 +1404,40 @@ print(np.all(x_ == x))
 b = lambda x_: ((x_ - 13) % 27 in [0, 1, 2, 13, 14, 15]) and x_ >= 13  # returns True if x_ is in the sequence n[i]
 print([b(x_) for x_ in range(100)])
 print(all([b(x_) for x_ in x]))  
+
+
+
+# # scores when solving poisson loss and optimizing for L2 loss (last submission on 20240525)
+# test scores: R2
+# alpha: None, score: 0.8571233099910697
+# alpha: 0.05, score: 0.39415937020526903
+# alpha: 0.5, score: 0.8559000882961587
+# alpha: 0.95, score: 0.5731754527723034
+# test scores: RMSE
+# alpha: None, score: 104.54973425774851
+# alpha: 0.05, score: 215.28880180343026
+# alpha: 0.5, score: 104.99632545899658
+# alpha: 0.95, score: 180.70365512263675
+# test scores: RMSLE
+# alpha: None, score: 0.48490745189642037
+# alpha: 0.05, score: 0.9999196911757344
+# alpha: 0.5, score: 0.49315850707354725
+# alpha: 0.95, score: 0.7819359686797092
+
+# test scores: R2
+# alpha: None, score: 0.8558208472903388
+# alpha: 0.05, score: 0.44795797177847463
+# alpha: 0.5, score: 0.8634387760186986
+# alpha: 0.95, score: 0.6126100119786368
+# test scores: RMSE
+# alpha: None, score: 105.02519040017556
+# alpha: 0.05, score: 205.50780207466207
+# alpha: 0.5, score: 102.2129548464391
+# alpha: 0.95, score: 172.1537309274156
+# test scores: RMSLE
+# alpha: None, score: 0.4724942041690751
+# alpha: 0.05, score: 1.005819961979053
+# alpha: 0.5, score: 0.4768885399924161
+# alpha: 0.95, score: 0.7819365932612692
+
 
