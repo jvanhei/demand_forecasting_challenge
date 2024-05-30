@@ -1,8 +1,8 @@
 <H3> Introduction </H3>
-Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different distribution centers (center_id) serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week 146 to 155) minimizing the total root-mean-squared-error (RMSE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: 
+Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different distribution centers (center_id) serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week 146 to 155) minimizing the total root-mean-squared-log-error (RMSLE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: 
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/
 
-Gradient boosting machine (LightGBM: https://lightgbm.readthedocs.io/en/stable/Python-Intro.html) was used. Various aspects including: exploratory data analysis, visualization, feature engineering, feature importance/selection and hyperparameter optimization relevant to time-series forecasting with LightGBM are presented. The RMSE obtained for the submitted answers was 50.8 which ranks 88 out of 1861 submissions (on 2024-05-23):
+Gradient boosting machine (LightGBM: https://lightgbm.readthedocs.io/en/stable/Python-Intro.html) was used. Various aspects including: exploratory data analysis, visualization, feature engineering, feature importance/selection and hyperparameter optimization relevant to time-series forecasting with LightGBM are presented. The RMSLE obtained for the submitted answers was 49.49 which ranks 27 out of 1861 submissions (on 2024-05-29):
 https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/#LeaderBoard
 
 
@@ -47,10 +47,11 @@ file_name_ext = '_virtual'  # string to append to validateion base filenames (ru
 
 ```
 
-Variables for plotting and algorithms used are provided. Confidence intervals are determined using quantile regression (quantile_alphas):
+Variables for plotting and algorithms used are provided. Confidence intervals are determined using quantile regression (quantile_alphas). The root-mean-squared-log-error (RMSLE) is minimized using *objective_type = 'RMSLE'*. This is performed by taking **log(x+1)** of the count data **x** and then simply minimizing the standard regression loss (RMSE).
 
 
 ```python
+objective_type = 'RMSLE'  # type of objective function to minimize ('poisson', 'R2', 'RMSLE')
 algorithms = ['mean value', 'LightGBM']
 default_algorithm = 'LightGBM' 
 plot_ts = 5 # number of individual time-series with targets, predictions and confidence intervals to plot
@@ -71,17 +72,19 @@ quantile_alphas = [0.05, 0.5, 0.95]  # predict quantiles for the predictions (us
 
 ```
 
-The target variable **num_orders** is a non-negative integer (count-like), and therefore *poisson* loss function is used for the objective. This fits the data better than using least squares or RMSE (L2) loss for regression.
+The target variable **num_orders** is a non-negative integer (count-like), which suggests to use *poisson* loss function as the objective. This fits the data better than using least squares or RMSE (L2) loss for regression. However, the actual objective is to minimize RMLSE, which treats each data point equally.
 Note that during validation, the *number of boosters* (**early_stopping_round**) is determined by L2 loss since **first_metric_only: True**, as the goal of the project is to minimize L2 for the predictions.
 
 
 ```python
 nfold = 5  # number of cross-validation folds
-use_important_features = 4  # start with this many current features
-param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_child_samples':40, 'objective': 'poisson',
-        'metric':['l2', 'poisson'], 'early_stopping_round':1000, 'num_iterations':10000, 'verbose': -1,
-        'min_split_gain': 0., 'min_child_weight': 1e-3, 'reg_alpha': 0., 'reg_lambda': 0.,                                        
-        'subsample': 1.0, 'subsample_freq': 10, 'boosting_type': 'gbdt', 'first_metric_only': True}   
+use_important_features = 2  # start with this many current features
+param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_child_samples':40, 'objective': 'l2',
+        'metric':['l2'], 'early_stopping_round':1000, 'num_iterations':10000, 'verbose': -1,
+        'min_split_gain': 0., 'min_child_weight': 1e-3, 'reg_alpha': 0., 'reg_lambda': 0.,
+        'subsample': 1.0, 'subsample_freq': 10, 'boosting_type': 'gbdt', 'first_metric_only': True} 
+if objective_type == 'poisson':
+    param_vals['objective'] = 'poisson'  
 ```
 
 Below are the sequence of steps including: feature importances/relevance, feature engineering, hyperparameter optimization, and saving results.
@@ -89,7 +92,7 @@ Each step depends on the previous one. It is good practice to check the results,
 Edit each step as necessary before running and check results after running it.
 Set the step you are working on to 'True' to run and test the results of that step. 
 
-<h4> For demonstration and simplicity, these steps are skipped, instead perform some exploratory data analysis, load the final model results and view them. </h4>
+<h4> For demonstration and simplicity, these steps are skipped in this notebook and everything should run without any modifications. Perform exploratory data analysis, load the final model results and view them. </h4>
 
 
 ```python
@@ -103,10 +106,9 @@ write_new_data = False  # this runs the final model to generate the data predict
 # optional parameters or hyperparameter optimization in some of the above steps
 find_recurrent_features = True  # feature engineering: temporally lagged features 
 use_average_target_properties = False  # use temporal average statistics (keep False because it did not help CV scores improve)
-do_lr_opt = False  # optimize learning rate for gradient boosting
-do_pars_opt = False  # optimize hyperparameters for gradient boosting 
+do_lr_opt = False  # optimize learning rate for gradient boosting using Optuna
+do_pars_opt = 0  # number of trials in hyperparameters search with Optuna for gradient boosting 
 test_recurrent = True  # check if recurrent features improve test and CV results for each time step
-
 ```
 
 Load the raw data file and tabulate some statistics.
@@ -704,7 +706,6 @@ Feature engineering is used to create additional features:
 
 ```python
 df_tree = df_copy.copy()
-
 def add_merged_feature(df_tree, columns, merge_col_name, mean_col_name=None, count_col_name=None,
         median_col_name=None, sum_col_name=None, any_col_name=None):
     if mean_col_name is not None:  # gets mean by group
@@ -819,7 +820,7 @@ best_features = load_model_pickle(relevant_eng_features_fname)
 print(best_features)
 ```
 
-    ['homepage_featured_mean_ts', 'checkout_price_mean_ts', 'checkout_price', 'center_id_week_count', 'ts_mean', 'emailer_for_promotion', 'meal_id', 'center_id', 'homepage_featured', 'meal_id_week_count']
+    ['center_id_week_count', 'homepage_featured', 'meal_id_week_count', 'checkout_price', 'meal_id', 'checkout_price_mean_ts', 'homepage_featured_mean_ts', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'category_week_checkout_price_ratio', 'ts_mean', 'op_area']
 
 
 The features above were found to give a good prediction accuracy based on cross-validation from the initial set of features. Interestingly **week** is not one of them which means that the features above can explain the time-dependence better than time (*week*) itself.
@@ -935,7 +936,7 @@ best_features_steps, params_recurrent, best_features = load_model_pickle(fname_r
 print(params_recurrent)
 ```
 
-    [[-1, -16, 0, 0.4596953866951567, ['num_orders'], ['checkout_price', 'homepage_featured', 'center_id_week_count', 'week'], []], [-2, -19, 3, 0.6703694841647946, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count'], []], [-3, -18, 1, 0.1679195064893821, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-4, -18, 1, 0.1679195064893821, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count'], []], [-5, -12, 1, 0.39183863327402246, ['num_orders'], ['checkout_price', 'homepage_featured', 'center_id_week_count', 'meal_id_week_count'], []], [-6, -12, 1, 0.39183863327402246, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count'], []], [-7, -12, 1, 0.39183863327402246, ['num_orders'], ['checkout_price', 'homepage_featured'], []], [-8, -15, -3, 0.22309911406452448, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count'], []], [-9, -19, 1, 0.10089407620493536, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-10, -20, 0, 0.7375200627830971, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count'], []]]
+    [[-1, -14, 4, 0.7937472248664734, ['num_orders'], ['checkout_price', 'emailer_for_promotion', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-2, -9, 4, 0.4892818699851553, ['num_orders'], ['checkout_price', 'base_price', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-3, -10, 5, 0.1744524006503157, ['num_orders'], ['checkout_price', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-4, -10, 5, 0.1744524006503157, ['num_orders'], ['homepage_featured', 'meal_id_week_count', 'week'], []], [-5, -14, 5, 0.1257840236387211, ['num_orders'], ['week'], []], [-6, -14, 4, 0.1257840236387211, ['num_orders'], ['homepage_featured', 'meal_id_week_count', 'week'], []], [-7, -14, 3, 0.1257840236387211, ['num_orders'], ['base_price', 'homepage_featured', 'meal_id_week_count', 'week'], []], [-8, -14, 2, 0.1257840236387211, ['num_orders'], ['homepage_featured', 'center_id_week_count', 'meal_id_week_count', 'week'], []], [-9, -14, 1, 0.1257840236387211, ['num_orders'], ['homepage_featured', 'meal_id_week_count', 'week'], []], [-10, -14, -9, 0.2006825182491716, ['num_orders'], ['homepage_featured', 'meal_id_week_count', 'week'], []]]
 
 
 Load the final generated forecasts (csv file) which was created using the above lagged feature parameters.
@@ -954,10 +955,19 @@ for ind, alpha in enumerate(alphas):
     final_preds_gbm.append(pd.read_csv(fname_final))
 ```
 
-The coefficient of determination **R^2** is dimensionless and inversely related to the L2 loss. It is used to evaluate the forecasting predictions and confidence (quantile) estimates.
+Functions to evaluate the final RMLSE and RMSE loss are provided below. The coefficient of determination **R^2** is dimensionless and inversely related to the RMSE loss. 
 
 
 ```python
+def get_RMSLE_loss(preds, targets):
+    """
+    Evaluate the root-mean-squared-log-error loss given the predictions 'preds' and training data 'targets'
+    """
+    return np.sqrt(np.mean((np.log((targets + 1.) / (preds + 1.)))**2))
+
+def get_RMSE_loss(preds, targets):
+    return np.sqrt(np.mean((targets - preds)**2))
+
 def get_R2_score(predictions, target_values, weights=None):
     """ 
     Calculate final score (R**2 value) 
@@ -980,30 +990,47 @@ def get_R2_score(predictions, target_values, weights=None):
     explained_var = np.mean(weights_f * (target_values_f - mean_target_value)**2)  # explained weighted variance
     return 1. - unexplained_var / explained_var
 
-def get_lgb_scores(df, preds_gbm, id_var, target_feature, alphas):
+def get_lgb_scores(df, preds_gbm, id_var, target_feature, alphas, score_type='R2'):
     df_tree_scores = []
     for ind, alpha in enumerate(alphas):
-        preds_gbm_ = preds_gbm[ind]
-        mask_gbm = df[id_var].isin(preds_gbm_[id_var])
+        preds_gbm_ = preds_gbm[ind]                                                                                               
+        mask_gbm = df[id_var].isin(preds_gbm_[id_var])  
         lgb_targets = df[mask_gbm].sort_values(id_var)[target_feature].values
         lgb_preds = preds_gbm_.sort_values(id_var)[target_feature].values
-        df_tree_scores.append(get_R2_score(lgb_preds, lgb_targets))
+        if score_type=='R2':
+            score = get_R2_score(lgb_preds, lgb_targets)
+        elif score_type=='RMSE':   
+            score = get_RMSE_loss(lgb_preds, lgb_targets)
+        elif score_type=='RMSLE':
+            score = get_RMSLE_loss(lgb_preds, lgb_targets)
+        df_tree_scores.append(score)
         print(f'alpha: {alpha}, score: {df_tree_scores[-1]}')
     return df_tree_scores
-
-print('test scores: ')
-df_tree_test_scores =  get_lgb_scores(df_tree, test_preds_gbm, id_var, target_feature, alphas)
-if run_mode == 2:
-    print('final scores:' )
-    df_tree_final_scores = get_lgb_scores(df_sample, final_preds_gbm, id_var, target_feature, alphas)
+        
+for score_type in ['R2', 'RMSE', 'RMSLE']:
+    print(f'test scores: {score_type}')                                                             
+    df_tree_test_scores =  get_lgb_scores(df_tree, test_preds_gbm, id_var, target_feature, alphas, score_type)
+    if run_mode == 2:
+        print('final scores:' )
+        df_tree_final_scores = get_lgb_scores(df_sample, final_preds_gbm, id_var, target_feature, alphas, score_type)
 
 ```
 
-    test scores: 
-    alpha: None, score: 0.8571233099910697
-    alpha: 0.05, score: 0.39415371574864855
-    alpha: 0.5, score: 0.8558968843164776
-    alpha: 0.95, score: 0.5731749740670733
+    test scores: R2
+    alpha: None, score: 0.8558213118147608
+    alpha: 0.05, score: 0.4479530679554321
+    alpha: 0.5, score: 0.8634402169898404
+    alpha: 0.95, score: 0.6126096619175234
+    test scores: RMSE
+    alpha: None, score: 105.02502121203617
+    alpha: 0.05, score: 205.50871484181175
+    alpha: 0.5, score: 102.21241557803447
+    alpha: 0.95, score: 172.15380870990225
+    test scores: RMSLE
+    alpha: None, score: 0.47244320947533913
+    alpha: 0.05, score: 1.006093451717507
+    alpha: 0.5, score: 0.47694858045923605
+    alpha: 0.95, score: 0.7819042717908878
 
 
 Define features to plot vs time and plot averaged time series.
@@ -1222,7 +1249,7 @@ plt.show()
 
 
 <H3> Conclusions </H3>
-A time series forecasting model was developed using gradient boosting algorithm (LightGBM) with lags of up to 20 weeks to forecast order demand and achieved a reasonable accuracy (R^2 = 85.7%) on the test data (weeks 136 to 145 for 3600 time series). The model can forecast RMSE predictions and confidence (quantile) estimates, and was optimized using feature engineering, feature selection and hyperparameter tuning in a semi-automated fashion. Slow (subtle) time-dependence of the features over the course of the data (155 weeks) was observed and its modeling can be investigated further (e.g. capturing effects of inflation with slow price increases).
+A time series forecasting model was developed using gradient boosting algorithm (LightGBM) with lags of up to 20 weeks to forecast order demand and achieved a reasonable accuracy (RMLSE=0.4724, RMSE=105.0, R^2 = 85.58%) on the test data (weeks 136 to 145 for 3600 time series). The model can forecast RMSE predictions and confidence (log quantile) estimates, and was optimized using feature engineering, feature selection and hyperparameter tuning in a semi-automated manner. 
 
 
 ```python
