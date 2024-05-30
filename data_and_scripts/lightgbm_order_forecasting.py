@@ -1,4 +1,4 @@
-""" Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different restaurant centers (center_id) locations serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week) minimizing the total root-mean-squared-error (RMSE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/ """
+""" Forecasting demand is important in many practial applications including food, retail, energy and finance. The goal of this project is to predict how many food items (num_orders) will be ordered from different restaurant centers (center_id) locations serving different types of meals (meal_id). The objective is to predict the number of orders (num_orders) for the next 10 time-steps (week) minimizing the total root-mean-squared-error (RMSLE). Thanks to Analytics Vidhya for providing this dataset. More information can be found here: https://datahack.analyticsvidhya.com/contest/genpact-machine-learning-hackathon-1/ """
 
 import sys
 import numpy as np  
@@ -26,9 +26,9 @@ run_mode = 0  # How to run this program
 # run_mode = 2: use new files (from run_mode=1) and run end-to-end, then calculate final predictions with validation
 test_time_len = None  # for run_mode=1 only: number of time-steps to use for predictions (None: same number of time-steps as run-mode=0)
 file_name_ext = '_virtual'  # string to append to validateion base filenames (run_mode = 1 and 2 only)
-objective_type = 'RMSLE'  # type of objective function to minimize ('poisson', 'R2', 'RMSLE')
 
 # some high-level hyperparameters
+objective_type = 'RMSLE'  # type of objective function to minimize ('poisson', 'R2', 'RMSLE')
 algorithms = ['mean value', 'LightGBM']
 default_algorithm = 'LightGBM' # 'mean value'
 plot_data = True # plot data for visualization
@@ -46,38 +46,38 @@ quantile_alphas = [0.05, 0.5, 0.95]  # predict quantiles for the predictions (us
 # feature search hyperparameters -- since orders is a non-negative integer (count-like) we use 'poisson regression' for the objective. 
 # Note that during validation, number of boosters (stopping rounds) is determined by L2 (RMSE) loss which is what we want to minimize
 
-def MSLE_objective_lgb(targets, preds):
-    """ 
-    Custom objective function for lightGBM (log-mean-squared-error LMSE)
-    returns derivative of loss wrt preds, and second-order derivative of loss wrt preds 
-    
-    Use with: 
-    param_vals['objective'] = MSLE_objective_lgb; param_vals['metric'] = [MSLE_metric_lgb, 'l2']
-    with eval_metric=param_vals['metric'][0] in gbm.fit() for train_val_lightGBM()
-    """
-    small = 1.
-    preds = np.maximum(preds + 1., small)
-    temp = np.log(preds / (targets + 1.))
-    denom = 1. / preds
-    return temp * denom, (1. - temp) * denom * denom
-
-def MSLE_metric_lgb(targets, preds):
-    """
-    Evaluate this metric for early stopping rounds (LMSE loss)
-    """
-    small = 1.,
-    preds = np.maximum(preds + 1., small)
-    loss = 0.5 * np.sum((np.log((targets + 1.) / preds))**2)
-    return 'LMSE', loss, False
-
-def get_RMSLE_loss(preds, targets):
-    """
-    Evaluate the root-mean-squared-log-error loss given the predictions 'preds' and training data 'targets'
-    """
-    return np.sqrt(np.mean((np.log((targets + 1.) / (preds + 1.)))**2))
-
-def get_RMSE_loss(preds, targets):
-    return np.sqrt(np.mean((targets - preds)**2))
+# # custom objective and evaluation metrics for lgb.LGBMRegressor.fit() 
+# def MSLE_objective_lgb(targets, preds):
+#     """ 
+#     Custom objective function for lightGBM (log-mean-squared-error LMSE)
+#     returns derivative of loss wrt preds, and second-order derivative of loss wrt preds 
+#     
+#     Use with
+#     param_vals['objective'] = MSLE_objective_lgb; param_vals['metric'] = [MSLE_metric_lgb, 'l2']
+#     """
+#     delta = 1.  # prevent ill-defined behavior since (preds + 1.) / (targets + 1.) > 0 as input to np.log
+#     preds = np.maximum(preds + 1., delta)
+#     temp = np.log(preds / (targets + 1.))
+#     denom = 1. / preds
+#     return temp * denom, (1. - temp) * denom * denom
+# 
+# def MSLE_metric_lgb(targets, preds):
+#     """
+#     Evaluate this metric for early stopping rounds (LMSE loss)
+#     """
+#     delta = 1.,
+#     preds = np.maximum(preds + 1., delta)  
+#     loss = 0.5 * np.sum((np.log((targets + 1.) / preds))**2)
+#     return 'LMSE', loss, False
+# 
+# # note for lgb.cv --> use feval=MSLE_metric_lgb_dataset with params['objective'] = MSLE_objective_lgb_dataset
+# # see: https://lightgbm.readthedocs.io/en/latest/pythonapi/lightgbm.cv.html or https://github.com/microsoft/LightGBM/issues/3017
+# # need valid LMSE-mean instead of valid l2-mean
+# def MSLE_objective_lgb_cv(preds, Dataset):
+#     return MSLE_objective_lgb(Dataset.get_label(), preds)
+# 
+# def MSLE_metric_lgb_cv(preds, Dataset):
+#     return MSLE_metric_lgb(Dataset.get_label(), preds)
 
 nfold = 5  # number of cross-validation folds
 use_important_features = 2  # start with this many current features
@@ -85,6 +85,8 @@ param_vals = {'num_leaves':None, 'learning_rate':0.05, 'max_depth':None, 'min_ch
         'metric':['l2'], 'early_stopping_round':1000, 'num_iterations':10000, 'verbose': -1,
         'min_split_gain': 0., 'min_child_weight': 1e-3, 'reg_alpha': 0., 'reg_lambda': 0.,
         'subsample': 1.0, 'subsample_freq': 10, 'boosting_type': 'gbdt', 'first_metric_only': True} 
+if objective_type == 'poisson':
+    param_vals['objective'] = 'poisson'
 
 # Sequence of steps in finding feature importances/relevance, feature engineering, hyperparameter optimization, and saving results
 # Each step depends on the one before it. It is a good idea to check the results after each step before proceeding to the next one.
@@ -100,8 +102,8 @@ write_new_data = False  # this runs the final model to generate the data predict
 # optional parameters or hyperparameter optimization in some of the above steps
 find_recurrent_features = True  # feature engineering: temporally lagged features 
 use_average_target_properties = False  # use temporal average statistics (keep False because it did not help CV scores improve)
-do_lr_opt = False  # optimize learning rate for gradient boosting
-do_pars_opt = None  # optimize hyperparameters for gradient boosting 
+do_lr_opt = False  # optimize learning rate for gradient boosting using Optuna
+do_pars_opt = 0  # number of trials in hyperparameters search with Optuna for gradient boosting 
 test_recurrent = True  # check if recurrent features improve test and CV results for each time step
 
 # functions to create new file-names for end-to-end testing predictions (using run-mode=1, 2)
@@ -745,14 +747,12 @@ class Sfs_FW:
         print(f'best_features: {self.best_features}')
         print(f'cur_features: {self.cur_features}')
 
-
-#### steps: find_relevant_raw_features, find_relevant_eng_features 
+# Convert targets to log(targets + 1) to minimize RMSLE
 df_tree = df_copy.copy()
-
 if objective_type == 'RMSLE':
-    # convert targets to log(targets + 1)
     df_tree[target_feature] = np.log(df_tree[target_feature] + 1)
 
+#### steps: find_relevant_raw_features, find_relevant_eng_features 
 relevant_raw_features_fname = lgb_model_str + '_relevant_raw_features.pkl'
 relevant_eng_features_fname = lgb_model_str + '_relevant_eng_features.pkl'
 best_features = None  # initialize best features
@@ -847,25 +847,6 @@ for col in df_tree.columns:
         df_tree.pop(col)
 
 
-# # 2024-05-27 -- optimizing rmsle (relevant raw features)
-# final LightGBM train score: 0.8552046903567609 with 2151 boosting rounds
-# best_scores_test: [0.3430720370703968, 0.3950831507932945, 0.8023119135674226, 0.802386071173102, 0.8112301353573637, 0.8140931286450854, 0.814946178130941, 0.8144371526280719, 0.8147542606495116]
-# best_scores_cv: [0.3584859239668875, 0.45120344147970926, 0.7984718438423445, 0.7986700775329402, 0.8096414780416005, 0.813090699891878, 0.8132525453089963, 0.8135398627338051, 0.8137226439898346]
-# best_test_features: [['base_price'], ['meal_id'], ['op_area'], ['homepage_featured'], ['emailer_for_promotion'], ['city_code'], ['category'], ['cuisine']]
-# removed/added: [False, False, False, False, False, False, False, False]
-# best_features: ['cuisine', 'homepage_featured', 'checkout_price', 'meal_id', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'op_area']
-# cur_features: ['center_id', 'checkout_price']
-
-# # relevant eng features
-# best_scores_test: [0.8213317939563317, 0.8264676782276448, 0.8261063603254764, 0.8264359104792862, 0.8252589287022488, 0.8261436107876848, 0.8243041937535824]
-# best_scores_cv: [0.821584766237988, 0.8239665514441228, 0.824018516584547, 0.8247898287761534, 0.82559501322061, 0.8259476414383992, 0.8264111551210834]
-# best_test_features: [['ts_mean'], {'cuisine'}, ['homepage_featured_mean_ts', 'homepage_featured'], ['category_week_checkout_price_ratio', 'category', 'checkout_price'], ['center_id_week_count', 'center_id'], ['checkout_price_mean_ts', 'checkout_price']]
-# removed/added: [False, True, False, False, False, False]
-# best_features: ['center_id_week_count', 'homepage_featured', 'meal_id_week_count', 'checkout_price', 'meal_id', 'checkout_price_mean_ts', 'homepage_featured_mean_ts', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'category_week_checkout_price_ratio', 'ts_mean', 'op_area']
-# cur_features: ['cuisine', 'homepage_featured', 'meal_id_week_count', 'checkout_price', 'meal_id', 'category', 'emailer_for_promotion', 'center_id', 'base_price', 'city_code', 'op_area']
-
-
-
 # try some hyperparameter optimization with optuna
 import optuna
 
@@ -894,7 +875,7 @@ def plot_opt(study):
 if do_lr_opt:
     print('optimizing lightGBM hyperparameters ..')
     study = optuna.create_study(direction='maximize')  # trying to maximize the R**2
-    study.optimize(objective, n_trials=64)  # find optimal learning rate
+    study.optimize(objective, n_trials=32)  # find optimal learning rate
     print(study.best_params)
     plot_opt(study)
 
@@ -904,7 +885,7 @@ if do_lr_opt:
     study2 = load_model_pickle(fname_study)
 
 # optimize other hyperparameters
-if do_pars_opt is not None:
+if do_pars_opt > 0:
     print('optimizing lightGBM hyperparameters ..')
     study_pars = optuna.create_study(direction='maximize')
     study_pars.optimize(objective, n_trials=do_pars_opt)
@@ -1256,10 +1237,22 @@ for ind, alpha in enumerate(alphas):
         test_preds_gbm.append(pd.read_csv(fname_pred))
         final_preds_gbm.append(pd.read_csv(fname_final))
 
-# R2 LightGBM test score for all the predictions
+# calculate losses and scores manually
+def get_RMSLE_loss(preds, targets):
+    """
+    Return the root-mean-squared-log-error loss given the predictions 'preds' and training data 'targets'
+    """
+    return np.sqrt(np.mean((np.log((targets + 1.) / (preds + 1.)))**2))
+
+def get_RMSE_loss(preds, targets):
+    """ 
+    Return standard root-mean-squared-error (RMSE) 
+    """
+    return np.sqrt(np.mean((targets - preds)**2))
+
 def get_R2_score(predictions, target_values, weights=None):
     """ 
-    Calculate final score (R**2 value) 
+    Return final score (R**2 value) 
     Note that sklearn.metrics.r2_score gives weird results when input arrays are not flattened
 
     :param predictions: [np.array] predicted values
@@ -1407,7 +1400,7 @@ print(all([b(x_) for x_ in x]))
 
 
 
-# # scores when solving poisson loss and optimizing for L2 loss (last submission on 20240525)
+# # scores for weeks (136-145) when solving poisson loss and optimizing for L2 loss (submission on 20240523)
 # test scores: R2
 # alpha: None, score: 0.8571233099910697
 # alpha: 0.05, score: 0.39415937020526903
@@ -1424,6 +1417,7 @@ print(all([b(x_) for x_ in x]))
 # alpha: 0.5, score: 0.49315850707354725
 # alpha: 0.95, score: 0.7819359686797092
 
+# scores for weeks (136-145) when solving and optimizing MSLE loss (submission on 20240529)
 # test scores: R2
 # alpha: None, score: 0.8558208472903388
 # alpha: 0.05, score: 0.44795797177847463
